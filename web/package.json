@@ -1,0 +1,28 @@
+{
+  "name": "web",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint"
+  },
+  "dependencies": {
+    "@huggingface/transformers": "^4.3.2",
+    "@qdrant/js-client-rest": "^1.20.0",
+    "bcryptjs": "^3.0.3",
+    "next": "16.4.3",
+    "next-auth": "^4.24.15",
+    "pg": "^8.23.1",
+    "react": "19.3.0",
+    "react-dom": "19.3.0"
+  },
+  "devDependencies": {
+    "eslint": "^9",
+    "eslint-config-next": "16.4.3"
+  },
+  "allowScripts": {
+    "onnxruntime-node@1.30.0": true
+  }
+}
