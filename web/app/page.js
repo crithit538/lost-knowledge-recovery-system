@@ -77,6 +77,18 @@ export default function Dashboard() {
       >
         User Management
       </div>
+      <div
+        style={styles.navItem}
+        onClick={() => router.push('/transfer')}
+      >
+        Knowledge Transfer
+      </div>
+      <div
+        style={styles.navItem}
+        onClick={() => router.push('/audit-log')}
+      >
+        Audit Log
+      </div>
     </>
   )}
 </nav>
