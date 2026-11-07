@@ -1,6 +1,6 @@
-
 import { getToken } from 'next-auth/jwt';
 import { withRole } from '@/lib/db';
+import { upsertItemVector } from '@/lib/vectors'; // VECTOR SYNC
 
 export async function GET(request) {
   try {
@@ -152,7 +152,7 @@ export async function POST(request) {
       );
     }
 
-    
+
     const result = await withRole(
       token.id,
       token.role,
@@ -186,14 +186,37 @@ if (categoryName) {
           ]
         );
 
-        return inserted.rows[0];
+        // VECTOR SYNC: department id is stored with the vector
+        const dept = await client.query(
+          'SELECT dept_id FROM app_user WHERE user_id = $1',
+          [Number(token.id)]
+        );
+
+        return {
+          ...inserted.rows[0],
+          dept_id: dept.rows[0]?.dept_id ?? null,
+        };
       }
     );
+
+    // VECTOR SYNC: runs after the database commit; a failure never undoes the save
+    let vectorSync = 'skipped';
+
+    if (result.status === 'published') {
+      try {
+        await upsertItemVector(result);
+        vectorSync = 'ok';
+      } catch (vectorError) {
+        console.error('Vector sync error (create):', vectorError);
+        vectorSync = 'failed';
+      }
+    }
 
     return Response.json(
       {
         message: 'Knowledge item created successfully.',
         item: result,
+        vectorSync,
       },
       { status: 201 }
     );
@@ -206,4 +229,3 @@ if (categoryName) {
     );
   }
 }
-

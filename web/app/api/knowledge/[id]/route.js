@@ -1,6 +1,6 @@
-
 import { getToken } from 'next-auth/jwt';
 import { withRole } from '@/lib/db';
+import { upsertItemVector, deleteItemVector } from '@/lib/vectors'; // VECTOR SYNC
 
 export async function GET(request, context) {
   try {
@@ -160,7 +160,9 @@ export async function PATCH(request, context) {
       );
     }
 
-    if (!['draft', 'published'].includes(itemStatus)) {
+    // VECTOR SYNC: 'archived' is now accepted by the API
+    // (the edit page dropdown also needs an Archived option)
+    if (!['draft', 'published', 'archived'].includes(itemStatus)) {
       return Response.json(
         { error: 'Invalid knowledge item status.' },
         { status: 400 }
@@ -206,7 +208,22 @@ export async function PATCH(request, context) {
           ]
         );
 
-        return result.rows[0] || null;
+        const row = result.rows[0];
+
+        if (!row) {
+          return null;
+        }
+
+        // VECTOR SYNC: department id of the owner is stored with the vector
+        const dept = await client.query(
+          `SELECT u.dept_id
+           FROM knowledge_item k
+           JOIN app_user u ON u.user_id = k.owner_id
+           WHERE k.item_id = $1`,
+          [itemId]
+        );
+
+        return { ...row, dept_id: dept.rows[0]?.dept_id ?? null };
       }
     );
 
@@ -217,9 +234,25 @@ export async function PATCH(request, context) {
       );
     }
 
+    // VECTOR SYNC: runs after the database commit; a failure never undoes the save
+    let vectorSync = 'ok';
+
+    try {
+      if (updated.status === 'published') {
+        await upsertItemVector(updated);
+      } else {
+        // draft or archived items must not stay searchable
+        await deleteItemVector(updated.item_id);
+      }
+    } catch (vectorError) {
+      console.error('Vector sync error (update):', vectorError);
+      vectorSync = 'failed';
+    }
+
     return Response.json({
       message: 'Knowledge item updated successfully.',
       item: updated,
+      vectorSync,
     });
   } catch (error) {
     console.error('Knowledge update API error:', error);
