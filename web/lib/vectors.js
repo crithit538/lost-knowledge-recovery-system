@@ -1,45 +1,77 @@
-import { withRole } from '@/lib/db';
-
-// TEMPORARY stand-in until the real Qdrant code is ready.
-// The real version keeps the same function names, arguments and return shapes.
+import { qdrant, COLLECTION_NAME } from '@/lib/qdrant';
+import { generateEmbedding } from '@/lib/embeddings';
 
 // Returns [{ itemId, score }], best match first.
 export async function searchVectors(queryText, limit = 10) {
-  const words = queryText
-    .toLowerCase()
-    .split(/\s+/)
-    .filter((word) => word.length > 2);
+  const query = String(queryText ?? '').trim();
 
-  if (words.length === 0) return [];
+  if (!query) return [];
 
-  const patterns = words.map((word) => `%${word}%`);
+  const vector = await generateEmbedding(query);
 
-  // Only item ids come from here. The search route reloads the items
-  // through the logged-in user's role, so row-level security still applies.
-  const rows = await withRole(1, 'admin', async (client) => {
-    const result = await client.query(
-      `SELECT item_id
-       FROM knowledge_item
-       WHERE status = 'published'
-         AND (title ILIKE ANY($1::text[]) OR body ILIKE ANY($1::text[]))
-       LIMIT $2`,
-      [patterns, limit]
-    );
-    return result.rows;
-  });
+  const response = await qdrant.query(COLLECTION_NAME, {
+  query: vector,
+  limit: Math.max(1, Number(limit) || 10),
+  with_payload: true,
+});
 
-  return rows.map((row, index) => ({
-    itemId: row.item_id,
-    score: 1 - index * 0.01,
-  }));
+const results = response.points ?? [];
+
+return results
+    .map((point) => ({
+      itemId: Number(point.payload?.item_id),
+      score: Number(point.score),
+    }))
+    .filter(
+      (match) =>
+        Number.isSafeInteger(match.itemId) &&
+        Number.isFinite(match.score)
+    )
+    .sort((a, b) => b.score - a.score);
 }
 
-// Embed title and body and store the vector (real version talks to Qdrant).
+// Embed title and body and store the vector in Qdrant.
 export async function upsertItemVector(item) {
-  console.log('[vectors stub] upsert item', item?.item_id);
+  if (!item || !Number.isSafeInteger(Number(item.item_id))) {
+    throw new Error('A valid item_id is required for vector upsert.');
+  }
+
+  const itemId = Number(item.item_id);
+  const text = `${item.title ?? ''}\n${item.body ?? ''}`.trim();
+
+  if (!text) {
+    throw new Error(`Item ${itemId} has no text to embed.`);
+  }
+
+  const vector = await generateEmbedding(text);
+
+  await qdrant.upsert(COLLECTION_NAME, {
+    wait: true,
+    points: [
+      {
+        id: itemId,
+        vector,
+        payload: {
+          item_id: itemId,
+          title: item.title ?? '',
+          dept_id: item.dept_id ?? null,
+          category_id: item.category_id ?? null,
+        },
+      },
+    ],
+  });
 }
 
-// Remove the vector for an archived or deleted item.
+// Remove the vector for a draft, archived, or deleted item.
 export async function deleteItemVector(itemId) {
-  console.log('[vectors stub] delete item', itemId);
+  const id = Number(itemId);
+
+  if (!Number.isSafeInteger(id) || id <= 0) {
+    throw new Error('A valid item ID is required for vector deletion.');
+  }
+
+  await qdrant.delete(COLLECTION_NAME, {
+    wait: true,
+    points: [id],
+  });
 }
