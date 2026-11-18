@@ -65,7 +65,7 @@ export default function MyContributionsPage() {
               </h2>
 
               <p style={{ color: '#666', marginTop: 8 }}>
-                {item.category_name || 'Uncategorized'} · Criticality:{' '}
+                {item.category || item.category_name || 'Uncategorized'} · Criticality:{' '}
                 {item.criticality}
               </p>
 

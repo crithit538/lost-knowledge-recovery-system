@@ -167,5 +167,4 @@ API `GET /api/search?q=...` for any logged-in user. The search finds matching it
 
 ## Project status
 
-- Complete: database, advanced SQL, roles and row-level security, audit log, knowledge transfer, search API, role-based testing
-- In progress: Qdrant integration. `web/lib/vectors.js` currently contains a simple stand-in that returns the same result shapes; it will be replaced by the Qdrant implementation (collection `knowledge_chunks`, 384 dimensions, cosine distance).
+- Complete: Database design, advanced SQL (triggers, stored procedures, functions), database roles and row-level security (RLS), audit log, knowledge transfer, Qdrant Cloud vector integration (`knowledge_chunks`, 384 dimensions, cosine distance), local embeddings (`all-MiniLM-L6-v2`), semantic search with similarity scoring, and Next.js full-stack web application.

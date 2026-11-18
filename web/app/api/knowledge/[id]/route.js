@@ -131,8 +131,9 @@ export async function PATCH(request, context) {
       ? body.body.trim()
       : '';
 
-    const categoryName = typeof body.category === 'string'
-      ? body.category.trim()
+    const rawCategory = body.category ?? body.categoryId;
+    const categoryName = typeof rawCategory === 'string'
+      ? rawCategory.trim()
       : '';
 
     const criticality = Number(body.criticality);

@@ -116,9 +116,10 @@ export async function POST(request) {
       ? body.body.trim()
       : '';
 
-    const categoryName = typeof body.categoryId === 'string'
-  ? body.categoryId.trim()
-  : '';
+    const rawCategory = body.categoryId ?? body.category;
+    const categoryName = typeof rawCategory === 'string'
+      ? rawCategory.trim()
+      : '';
 
     const criticality = Number(body.criticality);
     const itemStatus = body.status;
