@@ -12,7 +12,8 @@ async function getAdminToken(request) {
   return token;
 }
 
-// GET: departed users (with item counts) and active users who can receive items
+// GET: departed users (with item counts), active users who can receive items,
+// and prioritized knowledge tasks owned by departed users
 export async function GET(request) {
   try {
     const token = await getAdminToken(request);
@@ -51,7 +52,34 @@ export async function GET(request) {
           ORDER BY full_name
         `);
 
-        return { departed: departed.rows, targets: targets.rows };
+        const items = await client.query(`
+          SELECT
+            k.item_id,
+            k.owner_id,
+            k.title,
+            k.criticality,
+            k.status,
+            COALESCE(c.name, 'Uncategorized') AS category_name,
+            (6 - k.criticality) AS priority_rank,
+            CASE k.criticality
+              WHEN 5 THEN 'Priority 1 (Urgent - Transfer First)'
+              WHEN 4 THEN 'Priority 2 (High Priority)'
+              WHEN 3 THEN 'Priority 3 (Medium Priority)'
+              WHEN 2 THEN 'Priority 4 (Low Priority)'
+              ELSE 'Priority 5 (Routine)'
+            END AS priority_label
+          FROM knowledge_item k
+          JOIN app_user u ON u.user_id = k.owner_id
+          LEFT JOIN category c ON c.category_id = k.category_id
+          WHERE u.status = 'departed' AND k.status <> 'archived'
+          ORDER BY k.criticality DESC, k.item_id ASC
+        `);
+
+        return {
+          departed: departed.rows,
+          targets: targets.rows,
+          items: items.rows,
+        };
       }
     );
 
@@ -66,7 +94,7 @@ export async function GET(request) {
   }
 }
 
-// POST: run the transfer_knowledge stored procedure
+// POST: run the transfer (single prioritized item OR full transfer via stored procedure)
 export async function POST(request) {
   try {
     const token = await getAdminToken(request);
@@ -81,6 +109,7 @@ export async function POST(request) {
     const body = await request.json();
     const fromUserId = Number(body.fromUserId);
     const toUserId = Number(body.toUserId);
+    const itemId = body.itemId ? Number(body.itemId) : null;
 
     if (
       !Number.isInteger(fromUserId) ||
@@ -105,24 +134,65 @@ export async function POST(request) {
       token.id,
       token.role,
       async (client) => {
-        const before = await client.query(
-          `SELECT COUNT(*)::int AS n
-           FROM knowledge_item
-           WHERE owner_id = $1 AND status <> 'archived'`,
-          [fromUserId]
-        );
+        if (itemId) {
+          // Transfer a single specific prioritized item
+          const itemRes = await client.query(
+            `SELECT item_id, title, criticality, owner_id
+             FROM knowledge_item
+             WHERE item_id = $1 AND owner_id = $2 AND status <> 'archived'`,
+            [itemId, fromUserId]
+          );
 
-        await client.query(
-          'CALL transfer_knowledge($1::int, $2::int, $3::int)',
-          [fromUserId, toUserId, Number(token.id)]
-        );
+          if (itemRes.rows.length === 0) {
+            throw new Error('Knowledge task not found or already transferred.');
+          }
 
-        return { moved: before.rows[0].n };
+          const item = itemRes.rows[0];
+          const rank = 6 - item.criticality;
+
+          await client.query(
+            `UPDATE knowledge_item SET owner_id = $1, updated_at = now() WHERE item_id = $2`,
+            [toUserId, itemId]
+          );
+
+          await client.query(
+            `INSERT INTO audit_log (actor_id, action, target_table, target_id, details)
+             VALUES ($1, 'TRANSFER_KNOWLEDGE', 'knowledge_item', $2, $3)`,
+            [
+              Number(token.id),
+              itemId,
+              `Priority ${rank} task "${item.title}" transferred from user #${fromUserId} to user #${toUserId}`,
+            ]
+          );
+
+          return {
+            moved: 1,
+            itemTitle: item.title,
+            priorityRank: rank,
+          };
+        } else {
+          // Batch transfer all items from the departed user using stored procedure
+          const before = await client.query(
+            `SELECT COUNT(*)::int AS n
+             FROM knowledge_item
+             WHERE owner_id = $1 AND status <> 'archived'`,
+            [fromUserId]
+          );
+
+          await client.query(
+            'CALL transfer_knowledge($1::int, $2::int, $3::int)',
+            [fromUserId, toUserId, Number(token.id)]
+          );
+
+          return { moved: before.rows[0].n };
+        }
       }
     );
 
     return Response.json({
-      message: 'Knowledge transferred successfully.',
+      message: itemId
+        ? `Priority ${result.priorityRank} task "${result.itemTitle}" transferred successfully.`
+        : 'Knowledge transferred successfully.',
       moved: result.moved,
     });
   } catch (error) {
@@ -134,7 +204,7 @@ export async function POST(request) {
     console.error('Transfer POST error:', error);
 
     return Response.json(
-      { error: 'Unable to transfer knowledge.' },
+      { error: error.message || 'Unable to transfer knowledge.' },
       { status: 500 }
     );
   }
